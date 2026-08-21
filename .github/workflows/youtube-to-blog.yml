@@ -37,7 +37,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python <<'PY'
-          import os, re, json, subprocess, urllib.request
+          import os, re, json, subprocess, urllib.request, urllib.error
           from pathlib import Path
 
           channel_url = "https://www.youtube.com/@YogeshSaharan1/videos"
@@ -64,7 +64,7 @@ jobs:
           """
 
           payload = json.dumps({
-              "model": "gpt-5.6-luna",
+              "model": "gpt-5.6",
               "input": prompt
           }).encode()
           req = urllib.request.Request(
@@ -76,8 +76,12 @@ jobs:
               },
               method="POST"
           )
-          with urllib.request.urlopen(req, timeout=120) as response:
-              data = json.load(response)
+          try:
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  data = json.load(response)
+          except urllib.error.HTTPError as e:
+              body = e.read().decode("utf-8", errors="replace")
+              raise SystemExit(f"OpenAI API HTTP {e.code}: {body[:2000]}")
 
           text = data.get("output_text", "").strip()
           if not text:
