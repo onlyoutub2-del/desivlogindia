@@ -1,4 +1,4 @@
-name: YouTube to AI Blog Draft
+name: YouTube to Blog Draft
 
 on:
   workflow_dispatch:
@@ -18,26 +18,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check API key
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "OPENAI_API_KEY is not configured in repository Secrets."
-            exit 1
-          fi
-
-      - name: Install tools
+      - name: Install YouTube tool
         run: |
           python -m pip install --upgrade pip
           pip install yt-dlp
 
-      - name: Generate blog draft
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Create free blog draft from latest YouTube vlog
         run: |
           python <<'PY'
-          import os, re, json, subprocess, urllib.request, urllib.error
+          import html, re, subprocess
           from pathlib import Path
 
           channel_url = "https://www.youtube.com/@YogeshSaharan1/videos"
@@ -48,82 +37,45 @@ jobs:
           rows = [x for x in raw if "\\t" in x]
           if not rows:
               raise SystemExit("Could not detect a YouTube video from the channel.")
+
           video_id, title = rows[-1].split("\\t", 1)
+          title = title.strip()
           video_url = f"https://www.youtube.com/watch?v={video_id}"
+          safe_title = html.escape(title)
+          slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] or video_id
 
-          prompt = f"""
-          You are the editorial writer for Desi Vlog India by Yogesh Saharan.
-          Create ONE original, useful, people-first blog post based only on this YouTube video title.
-          Do not invent places, events, prices, people, quotes, or specific facts not supported by the title.
-          Write in natural Hindi/Hinglish suitable for Indian readers.
-          Return ONLY valid JSON with keys: title, excerpt, body_html, seo_title, seo_description.
-          body_html must contain useful HTML using h2, h3, p, ul, li where appropriate.
-          Include a short section encouraging readers to watch the original YouTube video.
-          Video title: {title}
-          YouTube URL: {video_url}
-          """
+          excerpt = f"{safe_title} — Desi Vlog India par Yogesh Saharan ka latest vlog. Video dekhiye aur is vlog ke highlights aur experience ko YouTube par explore kijiye."
+          body = f'''<p><strong>{safe_title}</strong> Desi Vlog India par Yogesh Saharan ka latest vlog hai. Is post mein aapko is video ka quick introduction aur original vlog dekhne ka direct option milega.</p>
+          <h2>Is vlog ke baare mein</h2>
+          <p>Is article ka focus original YouTube vlog ko readers tak aasani se pahunchana hai. Video ke title se aap topic ka basic idea le sakte hain aur poora experience original video mein dekh sakte hain.</p>
+          <h2>Vlog kyun dekhein?</h2>
+          <ul><li>Original video directly YouTube par dekhein.</li><li>Desi Vlog India ke naye vlogs aur daily experiences follow karein.</li><li>Video pasand aaye to channel subscribe karke naye videos ke updates paayein.</li></ul>
+          <h2>Watch the Latest Vlog</h2>'''
 
-          payload = json.dumps({
-              "model": "gpt-5.6",
-              "input": prompt
-          }).encode()
-          req = urllib.request.Request(
-              "https://api.openai.com/v1/responses",
-              data=payload,
-              headers={
-                  "Content-Type": "application/json",
-                  "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"
-              },
-              method="POST"
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=120) as response:
-                  data = json.load(response)
-          except urllib.error.HTTPError as e:
-              body = e.read().decode("utf-8", errors="replace")
-              raise SystemExit(f"OpenAI API HTTP {e.code}: {body[:2000]}")
+          page = f'''<!doctype html>
+          <html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>{safe_title} | Desi Vlog India</title>
+          <meta name="description" content="{html.escape(excerpt)}">
+          <link rel="canonical" href="https://desivlogindia.netlify.app/blogs/{slug}.html">
+          <style>body{{font-family:system-ui,Arial;max-width:850px;margin:auto;padding:24px;line-height:1.7;background:#0b0d10;color:#f5f7fa}}a{{color:#ff9b43}}.video{{aspect-ratio:16/9}}iframe{{width:100%;height:100%;border:0;border-radius:12px}}.meta{{color:#a9b0ba}}</style></head>
+          <body><p><a href="../">← Desi Vlog India</a></p><p class="meta">Latest Vlog</p><h1>{safe_title}</h1><p>{html.escape(excerpt)}</p>{body}<div class="video"><iframe src="https://www.youtube.com/embed/{video_id}" title="{safe_title}" allowfullscreen></iframe></div><p><a href="{video_url}" target="_blank" rel="noopener">Watch on YouTube →</a></p></body></html>'''
 
-          text = data.get("output_text", "").strip()
-          if not text:
-              raise SystemExit("OpenAI returned no output_text.")
-          article = json.loads(text)
-
-          slug = re.sub(r"[^a-z0-9]+", "-", article["title"].lower()).strip("-")[:80] or video_id
           out = Path("blogs")
           out.mkdir(exist_ok=True)
-          page = f'''<!doctype html>
-          <html lang="hi">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>{article['seo_title']}</title>
-            <meta name="description" content="{article['seo_description']}">
-            <link rel="canonical" href="https://desivlogindia.netlify.app/blogs/{slug}.html">
-            <style>body{{font-family:system-ui,Arial;max-width:850px;margin:auto;padding:24px;line-height:1.7;background:#0b0d10;color:#f5f7fa}}a{{color:#ff9b43}}.video{{aspect-ratio:16/9}}iframe{{width:100%;height:100%;border:0}}</style>
-          </head>
-          <body>
-            <p><a href="../">← Desi Vlog India</a></p>
-            <h1>{article['title']}</h1>
-            <p>{article['excerpt']}</p>
-            {article['body_html']}
-            <h2>Watch the Vlog</h2>
-            <div class="video"><iframe src="https://www.youtube.com/embed/{video_id}" title="{title}" allowfullscreen></iframe></div>
-            <p><a href="{video_url}" target="_blank" rel="noopener">Watch on YouTube →</a></p>
-          </body>
-          </html>'''
           (out / f"{slug}.html").write_text(page, encoding="utf-8")
-          Path("blog-latest.txt").write_text(f"{slug}\n{article['title']}\n{video_url}\n", encoding="utf-8")
+          Path("blog-latest.txt").write_text(f"{slug}\n{title}\n{video_url}\n", encoding="utf-8")
+          print(f"Created blog draft: blogs/{slug}.html")
           PY
 
       - name: Create draft pull request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          BRANCH="ai-blog-$(date +%Y%m%d%H%M%S)"
+          BRANCH="blog-$(date +%Y%m%d%H%M%S)"
           git checkout -b "$BRANCH"
           git config user.name "desivlogindia-bot"
           git config user.email "actions@users.noreply.github.com"
           git add blogs blog-latest.txt
-          git commit -m "Create AI blog draft from latest YouTube vlog"
+          git commit -m "Create blog draft from latest YouTube vlog"
           git push origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" --title "AI blog draft from latest YouTube vlog" --body "Review the generated blog before merging. The original YouTube video is embedded in the draft."
+          gh pr create --base main --head "$BRANCH" --title "New blog draft from latest YouTube vlog" --body "Free automated blog draft generated from the latest YouTube video. Review before merging."
