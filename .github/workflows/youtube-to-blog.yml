@@ -30,7 +30,7 @@ jobs:
       - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp feedparser
+          pip install yt-dlp
 
       - name: Generate blog draft
         env:
@@ -39,34 +39,27 @@ jobs:
           python <<'PY'
           import os, re, json, subprocess, urllib.request
           from pathlib import Path
-          import feedparser
 
           channel_url = "https://www.youtube.com/@YogeshSaharan1/videos"
-          channel_id = subprocess.check_output([
+          raw = subprocess.check_output([
               "yt-dlp", "--flat-playlist", "--playlist-end", "1",
-              "--print", "channel_id", channel_url
-          ], text=True).strip().splitlines()[0]
-
-          feed = feedparser.parse(f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}")
-          if not feed.entries:
-              raise SystemExit("No YouTube videos found.")
-
-          entry = feed.entries[0]
-          video_id = entry.yt_videoid
-          title = entry.title
-          published = entry.published
+              "--print", "%(id)s\\t%(title)s", channel_url
+          ], text=True, stderr=subprocess.STDOUT).strip().splitlines()
+          rows = [x for x in raw if "\\t" in x]
+          if not rows:
+              raise SystemExit("Could not detect a YouTube video from the channel.")
+          video_id, title = rows[-1].split("\\t", 1)
           video_url = f"https://www.youtube.com/watch?v={video_id}"
+
           prompt = f"""
           You are the editorial writer for Desi Vlog India by Yogesh Saharan.
-          Create ONE original, useful, people-first blog post based only on this YouTube video metadata.
-          Do not invent places, events, prices, people, quotes, or facts that are not supported by the title/metadata.
-          If the metadata is insufficient for a factual claim, write generally rather than inventing details.
+          Create ONE original, useful, people-first blog post based only on this YouTube video title.
+          Do not invent places, events, prices, people, quotes, or specific facts not supported by the title.
           Write in natural Hindi/Hinglish suitable for Indian readers.
           Return ONLY valid JSON with keys: title, excerpt, body_html, seo_title, seo_description.
           body_html must contain useful HTML using h2, h3, p, ul, li where appropriate.
           Include a short section encouraging readers to watch the original YouTube video.
           Video title: {title}
-          Published: {published}
           YouTube URL: {video_url}
           """
 
@@ -91,9 +84,7 @@ jobs:
               raise SystemExit("OpenAI returned no output_text.")
           article = json.loads(text)
 
-          slug = re.sub(r"[^a-z0-9]+", "-", article["title"].lower()).strip("-")[:80]
-          if not slug:
-              slug = video_id
+          slug = re.sub(r"[^a-z0-9]+", "-", article["title"].lower()).strip("-")[:80] or video_id
           out = Path("blogs")
           out.mkdir(exist_ok=True)
           page = f'''<!doctype html>
