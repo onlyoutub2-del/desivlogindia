@@ -1,4 +1,4 @@
-name: YouTube to Blog Draft
+name: YouTube to Blog Automation
 
 on:
   workflow_dispatch:
@@ -7,15 +7,15 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  create-blog-draft:
+  publish-blog:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Install YouTube tool
@@ -23,10 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install yt-dlp
 
-      - name: Create free blog draft from latest YouTube vlog
+      - name: Detect latest YouTube vlog
+        id: video
         run: |
           python <<'PY'
-          import html, re, subprocess
+          import subprocess
           from pathlib import Path
 
           channel_url = "https://www.youtube.com/@YogeshSaharan1/videos"
@@ -37,45 +38,73 @@ jobs:
           rows = [x for x in raw if "\\t" in x]
           if not rows:
               raise SystemExit("Could not detect a YouTube video from the channel.")
-
           video_id, title = rows[-1].split("\\t", 1)
-          title = title.strip()
-          video_url = f"https://www.youtube.com/watch?v={video_id}"
+          last = Path("blog-latest.txt").read_text(encoding="utf-8").splitlines() if Path("blog-latest.txt").exists() else []
+          last_id = last[2].strip() if len(last) >= 3 else ""
+          last_id = last_id.rsplit("v=", 1)[-1] if "v=" in last_id else last_id
+          if video_id == last_id:
+              print(f"No new vlog. Latest video {video_id} is already published.")
+              Path("no_new_video").write_text("1")
+          else:
+              Path("no_new_video").write_text("0")
+              Path("video_id.txt").write_text(video_id, encoding="utf-8")
+              Path("video_title.txt").write_text(title.strip(), encoding="utf-8")
+              print(f"New vlog detected: {video_id} - {title.strip()}")
+          PY
+
+      - name: Create blog and add it to homepage
+        if: hashFiles('no_new_video') != ''
+        run: |
+          if [ "$(cat no_new_video)" = "1" ]; then
+            echo "Nothing to publish."
+            exit 0
+          fi
+          python <<'PY'
+          import html, re
+          from pathlib import Path
+
+          video_id = Path("video_id.txt").read_text(encoding="utf-8").strip()
+          title = Path("video_title.txt").read_text(encoding="utf-8").strip()
           safe_title = html.escape(title)
+          video_url = f"https://www.youtube.com/watch?v={video_id}"
           slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] or video_id
-
-          excerpt = f"{safe_title} — Desi Vlog India par Yogesh Saharan ka latest vlog. Video dekhiye aur is vlog ke highlights aur experience ko YouTube par explore kijiye."
-          body = f'''<p><strong>{safe_title}</strong> Desi Vlog India par Yogesh Saharan ka latest vlog hai. Is post mein aapko is video ka quick introduction aur original vlog dekhne ka direct option milega.</p>
+          excerpt = f"{safe_title} — Desi Vlog India par Yogesh Saharan ka latest vlog. Original video dekhiye aur naye desi experiences explore kijiye."
+          body = f'''<p><strong>{safe_title}</strong> Desi Vlog India par Yogesh Saharan ka latest vlog hai. Is post mein original video dekhne ka direct option diya gaya hai.</p>
           <h2>Is vlog ke baare mein</h2>
-          <p>Is article ka focus original YouTube vlog ko readers tak aasani se pahunchana hai. Video ke title se aap topic ka basic idea le sakte hain aur poora experience original video mein dekh sakte hain.</p>
+          <p>Video ke title se topic ka basic idea milta hai. Poora experience, visuals aur actual vlog original YouTube video mein dekhein.</p>
           <h2>Vlog kyun dekhein?</h2>
-          <ul><li>Original video directly YouTube par dekhein.</li><li>Desi Vlog India ke naye vlogs aur daily experiences follow karein.</li><li>Video pasand aaye to channel subscribe karke naye videos ke updates paayein.</li></ul>
-          <h2>Watch the Latest Vlog</h2>'''
-
-          page = f'''<!doctype html>
-          <html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>{safe_title} | Desi Vlog India</title>
-          <meta name="description" content="{html.escape(excerpt)}">
-          <link rel="canonical" href="https://desivlogindia.netlify.app/blogs/{slug}.html">
-          <style>body{{font-family:system-ui,Arial;max-width:850px;margin:auto;padding:24px;line-height:1.7;background:#0b0d10;color:#f5f7fa}}a{{color:#ff9b43}}.video{{aspect-ratio:16/9}}iframe{{width:100%;height:100%;border:0;border-radius:12px}}.meta{{color:#a9b0ba}}</style></head>
-          <body><p><a href="../">← Desi Vlog India</a></p><p class="meta">Latest Vlog</p><h1>{safe_title}</h1><p>{html.escape(excerpt)}</p>{body}<div class="video"><iframe src="https://www.youtube.com/embed/{video_id}" title="{safe_title}" allowfullscreen></iframe></div><p><a href="{video_url}" target="_blank" rel="noopener">Watch on YouTube →</a></p></body></html>'''
-
+          <ul><li>Original vlog directly YouTube par dekhein.</li><li>Desi Vlog India ke naye videos follow karein.</li><li>Channel ko subscribe karke future updates paayein.</li></ul>
+          <h2>Watch the Vlog</h2>'''
+          page = f'''<!doctype html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_title} | Desi Vlog India</title><meta name="description" content="{html.escape(excerpt)}"><link rel="canonical" href="https://desivlogindia.netlify.app/blogs/{slug}.html"><style>body{{font-family:system-ui,Arial;max-width:850px;margin:auto;padding:24px;line-height:1.7;background:#0b0d10;color:#f5f7fa}}a{{color:#ff9b43}}.video{{aspect-ratio:16/9}}iframe{{width:100%;height:100%;border:0;border-radius:12px}}.meta{{color:#a9b0ba}}</style></head><body><p><a href="../">← Desi Vlog India</a></p><p class="meta">Latest Vlog</p><h1>{safe_title}</h1><p>{html.escape(excerpt)}</p>{body}<div class="video"><iframe src="https://www.youtube.com/embed/{video_id}" title="{safe_title}" allowfullscreen></iframe></div><p><a href="{video_url}" target="_blank" rel="noopener">Watch on YouTube →</a></p></body></html>'''
           out = Path("blogs")
           out.mkdir(exist_ok=True)
           (out / f"{slug}.html").write_text(page, encoding="utf-8")
-          Path("blog-latest.txt").write_text(f"{slug}\n{title}\n{video_url}\n", encoding="utf-8")
-          print(f"Created blog draft: blogs/{slug}.html")
+          Path("blog-latest.txt").write_text(f"{slug}\n{title}\n{video_id}\n", encoding="utf-8")
+
+          index = Path("index.html")
+          content = index.read_text(encoding="utf-8")
+          marker = '<!-- AUTOMATED_BLOGS -->'
+          card = f'''<article class="card automated-blog"><div class="thumb">📝</div><div class="card-body"><span class="tag">NEW BLOG</span><h3>{safe_title}</h3><p>{html.escape(excerpt)}</p><a class="btn primary" href="blogs/{slug}.html">Read Full Blog →</a></div></article>'''
+          if marker in content:
+              content = content.replace(marker, marker + card, 1)
+          elif "</main>" in content:
+              section = f'''<section id="blogs"><div class="container"><div class="section-head"><div><h2>Latest Blogs</h2><p>Fresh posts generated from the latest Desi Vlog India videos.</p></div></div><div class="grid">{marker}{card}</div></div></section>'''
+              content = content.replace("</main>", section + "</main>", 1)
+          else:
+              content += f'\n<section id="blogs"><div class="container"><h2>Latest Blogs</h2><div class="grid">{card}</div></div></section>\n'
+          index.write_text(content, encoding="utf-8")
+          print(f"Published blog: blogs/{slug}.html")
           PY
 
-      - name: Create draft pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Commit and publish directly to main
         run: |
-          BRANCH="blog-$(date +%Y%m%d%H%M%S)"
-          git checkout -b "$BRANCH"
+          if [ "$(cat no_new_video)" = "1" ]; then
+            echo "No new content to commit."
+            exit 0
+          fi
           git config user.name "desivlogindia-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add blogs blog-latest.txt
-          git commit -m "Create blog draft from latest YouTube vlog"
-          git push origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" --title "New blog draft from latest YouTube vlog" --body "Free automated blog draft generated from the latest YouTube video. Review before merging."
+          git add blogs blog-latest.txt index.html
+          git commit -m "Publish latest YouTube vlog as blog"
+          git push origin main
+          echo "Published directly to main. Netlify should deploy automatically."
